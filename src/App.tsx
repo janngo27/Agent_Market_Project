@@ -3,7 +3,7 @@ import { Buffer } from 'buffer';
 import { 
   Connection, 
   PublicKey, 
-  Transaction, 
+  Transaction,
   SystemProgram, 
   LAMPORTS_PER_SOL 
 } from '@solana/web3.js';
@@ -12,11 +12,6 @@ if (typeof window !== 'undefined') {
   window.Buffer = window.Buffer || Buffer;
 }
 
-// -------------------------------------------------------------
-// KONFIGURACJA NETWORK & ADRES PORTFELA
-// -------------------------------------------------------------
-const RPC_ENDPOINT = 'https://api.devnet.solana.com';
-const MY_SOLANA_WALLET = 'J6znXExkH85QQfeKAPB9gUKrfV7jmYHgTAkpTu26wRtA';
 const N8N_WEBHOOK_URL = 'https://janngo27.app.n8n.cloud/webhook-test/agent-negotiate';
 
 type FlowStage = 
@@ -31,7 +26,8 @@ type FlowStage =
 export default function App() {
   const [taskId] = useState(() => 'task-' + Math.random().toString(36).substring(2, 9));
   const [isConnected, setIsConnected] = useState(false);
-  
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+
   const [taskDescription, setTaskDescription] = useState('');
   const [maxBudgetSol, setMaxBudgetSol] = useState('0.001');
   const [deadlineHours, setDeadlineHours] = useState('24');
@@ -53,34 +49,67 @@ export default function App() {
 
   const [error, setError] = useState<string | null>(null);
 
-  // Sprawdzenie czy Phantom jest podłączony przy ładowaniu
   useEffect(() => {
-    const solana = (window as any).solana;
-    if (solana && solana.isPhantom) {
-      solana.connect({ onlyIfTrusted: true })
-        .then(() => setIsConnected(true))
-        .catch(() => setIsConnected(false));
-    }
+    const checkPhantom = async () => {
+      const solana = (window as any).solana;
+      if (solana && solana.isPhantom) {
+        try {
+          const res = await solana.connect({ onlyIfTrusted: true });
+          setIsConnected(true);
+          setWalletAddress(res.publicKey.toString());
+        } catch {
+          setIsConnected(false);
+        }
+      }
+    };
+    checkPhantom();
   }, []);
 
-  // Ręczne podłączenie portfela przyciskiem
   const handleConnectWallet = async () => {
     const solana = (window as any).solana;
     if (!solana || !solana.isPhantom) {
-      alert('Nie wykryto wtyczki Phantom w przeglądarce! Upewnij się, że jest zainstalowana.');
+      alert('Nie wykryto wtyczki Phantom!');
       return;
     }
 
     try {
-      await solana.connect();
+      const response = await solana.connect();
       setIsConnected(true);
+      setWalletAddress(response.publicKey.toString());
       setError(null);
     } catch (err: any) {
-      setError('Użytkownik odrzucił połączenie z Phantomem.');
+      setError('Odrzucono połączenie z portfelem Phantom.');
     }
   };
 
-  // 1. ZAMROŻENIE ŚRODKÓW W BLOCKCHAINIE
+  // Wysyłanie transakcji bezpośrednio przez dostawcę Phantoma
+  const sendTransactionViaPhantom = async (userPublicKey: PublicKey, lamports: number) => {
+    const solana = (window as any).solana;
+    if (!solana || !solana.isPhantom) {
+      throw new Error('Portfel Phantom jest odłączony.');
+    }
+
+    // Łączymy się z darmowym RPC tylko do pobrania podstawowych parametrów
+    const connection = new Connection('https://api.devnet.solana.com', 'confirmed');
+    
+    const { blockhash } = await connection.getLatestBlockhash('confirmed');
+
+    const transaction = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: userPublicKey,
+        toPubkey: userPublicKey, // Przelew sam do siebie
+        lamports,
+      })
+    );
+
+    transaction.recentBlockhash = blockhash;
+    transaction.feePayer = userPublicKey;
+
+    // Przekazujemy transakcję do Phantoma – to Phantom sam ją podpisze i wyśle swoimi łączami!
+    const { signature } = await solana.signAndSendTransaction(transaction);
+    return signature;
+  };
+
   const handleInitiateAndLockEscrow = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -92,48 +121,30 @@ export default function App() {
 
     try {
       setError(null);
-      
-      if (!solana.isConnected) {
-        await solana.connect();
-        setIsConnected(true);
-      }
-
       setStage('LOCKING_ESCROW');
 
-      const connection = new Connection(RPC_ENDPOINT, 'confirmed');
-      const myPubkey = new PublicKey(MY_SOLANA_WALLET);
+      const res = await solana.connect();
+      const activePubkeyStr = res.publicKey.toString();
+      setWalletAddress(activePubkeyStr);
+      setIsConnected(true);
+
+      const userPublicKey = new PublicKey(activePubkeyStr);
       const lamportsToLock = Math.round(parseFloat(maxBudgetSol) * LAMPORTS_PER_SOL);
 
-      // Transakcja w ramach Twojego portfela
-      const transaction = new Transaction().add(
-        SystemProgram.transfer({
-          fromPubkey: myPubkey,
-          toPubkey: myPubkey,
-          lamports: lamportsToLock,
-        })
-      );
-
-      const { blockhash } = await connection.getLatestBlockhash();
-      transaction.recentBlockhash = blockhash;
-      transaction.feePayer = myPubkey;
-
-      // Wywołanie okna podpisu transakcji w Phantomie
-      const { signature } = await solana.signAndSendTransaction(transaction);
-      
-      // Czekanie na potwierdzenie w blockchainie
-      await connection.confirmTransaction(signature, 'confirmed');
+      // Wysyłka transakcji
+      const signature = await sendTransactionViaPhantom(userPublicKey, lamportsToLock);
 
       setLockTxSignature(signature);
       setStage('ESCROW_LOCKED');
 
-      // Strzał do n8n
+      // Strzał do n8n Webhook
       const payload = {
         taskId,
         action: 'EXECUTE_TASK',
         taskDescription,
         maxBudgetSol: parseFloat(maxBudgetSol),
         deadlineHours: parseInt(deadlineHours, 10),
-        clientPublicKey: MY_SOLANA_WALLET,
+        clientPublicKey: activePubkeyStr,
         escrowTxHash: signature,
       };
 
@@ -144,13 +155,13 @@ export default function App() {
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        throw new Error(`Błąd Webhooka n8n HTTP ${response.status}`);
       }
 
       const data = await response.json();
 
       setExecutionResult({
-        modelInfo: data?.modelInfo || data?.selectedModel || 'Claude-3.5-Sonnet (Zaawansowana logika i kod)',
+        modelInfo: data?.modelInfo || data?.selectedModel || 'Claude-3.5-Sonnet',
         deliverable: data?.deliverable || data?.output || data?.result || (typeof data === 'string' ? data : JSON.stringify(data, null, 2)),
         tokenUsage: data?.tokenUsage || {
           inputTokens: data?.inputTokens || 1240,
@@ -164,16 +175,15 @@ export default function App() {
 
     } catch (err: any) {
       console.error(err);
-      setError('Błąd wykonania transakcji: ' + (err.message || 'Odrzucono w Phantomie'));
+      setError('Błąd transakcji: ' + (err.message || 'Odrzucono w Phantomie lub błąd sieci.'));
       setStage('IDLE');
     }
   };
 
-  // 2. PRZELEW FINALNY W BLOCKCHAINIE PO ZATWIERDZENIU
   const handleApproveAndPayOnChain = async () => {
     const solana = (window as any).solana;
-    if (!solana || !solana.isPhantom) {
-      setError('Brak wtyczki Phantom!');
+    if (!solana || !solana.isPhantom || !walletAddress) {
+      setError('Brak podłączonego portfela!');
       return;
     }
 
@@ -181,31 +191,17 @@ export default function App() {
       setError(null);
       setStage('RELEASING_SOLANA');
 
-      const connection = new Connection(RPC_ENDPOINT, 'confirmed');
-      const myPubkey = new PublicKey(MY_SOLANA_WALLET);
+      const userPublicKey = new PublicKey(walletAddress);
       const lamportsToPay = Math.round(parseFloat(maxBudgetSol) * LAMPORTS_PER_SOL);
 
-      const transaction = new Transaction().add(
-        SystemProgram.transfer({
-          fromPubkey: myPubkey,
-          toPubkey: myPubkey,
-          lamports: lamportsToPay,
-        })
-      );
-
-      const { blockhash } = await connection.getLatestBlockhash();
-      transaction.recentBlockhash = blockhash;
-      transaction.feePayer = myPubkey;
-
-      const { signature } = await solana.signAndSendTransaction(transaction);
-      await connection.confirmTransaction(signature, 'confirmed');
+      const signature = await sendTransactionViaPhantom(userPublicKey, lamportsToPay);
 
       setFinalTxSignature(signature);
       setStage('COMPLETED');
 
     } catch (err: any) {
       console.error(err);
-      setError('Błąd podczas zatwierdzania płatności: ' + (err.message || 'Odrzucono'));
+      setError('Błąd finalizacji: ' + (err.message || 'Przerwano transakcję'));
       setStage('DELIVERED_REVIEW');
     }
   };
@@ -219,7 +215,11 @@ export default function App() {
         <div style={styles.topbarMeta}>
           <span style={styles.metaItem}>TASK ID: <code>{taskId}</code></span>
           <span style={styles.metaItem}>
-            PORTFEL: <code style={{ color: '#10b981' }}>{MY_SOLANA_WALLET.substring(0, 6)}...{MY_SOLANA_WALLET.substring(MY_SOLANA_WALLET.length - 6)}</code>
+            PORTFEL: {walletAddress ? (
+              <code style={{ color: '#10b981' }}>{walletAddress.substring(0, 6)}...{walletAddress.substring(walletAddress.length - 6)}</code>
+            ) : (
+              <code style={{ color: '#ef4444' }}>Niepołączony</code>
+            )}
           </span>
           <span style={styles.metaItem}>
             {isConnected ? (
@@ -232,7 +232,6 @@ export default function App() {
       </header>
 
       <main style={styles.workspace}>
-        {/* Lewa kolumna: Parametry */}
         <section style={styles.leftColumn}>
           <div style={styles.sectionHeader}>
             <h2 style={styles.sectionTitle}>1. Parametry Zlecenia</h2>
@@ -315,7 +314,6 @@ export default function App() {
           )}
         </section>
 
-        {/* Prawa kolumna: Wyniki i Akceptacja */}
         <section style={styles.rightColumn}>
           <div style={styles.sectionHeader}>
             <h2 style={styles.sectionTitle}>2. Wynik Prac & Finalizacja Transakcji</h2>
