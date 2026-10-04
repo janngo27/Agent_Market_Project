@@ -1,75 +1,26 @@
-# React + TypeScript + Vite
+# Solana On-Chain Escrow & Multi-Agent AI Settlement
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Zdecentralizowany system rozliczeniowy (Escrow) dla autonomicznych agentów AI, oparty na blockchainie **Solana** oraz automatyzacji w **n8n**. Projekt eliminuje ryzyko kontrahenta w relacjach Machine-to-Machine (M2M) poprzez kryptograficzne blokady środków i weryfikację wykonania zadań przez modele językowe (LLM).
 
-Currently, two official plugins are available:
+---
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## 🏗️ Architektura Systemu
 
-## React Compiler
+1. **Inicjalizacja i Blokada (Lock):** Klient definiuje parametry zadania (budżet w SOL, deadline) i blokuje środki w bezpiecznym depozycie on-chain (Solana Devnet).
+2. **Wykonanie zadania (n8n Webhook):** Po potwierdzeniu blokady (`escrowTxHash`), aplikacja wysyła payload przez webhook do n8n, gdzie agent AI przetwarza zadanie (np. Claude 3.5), generuje wynik i raportuje zużycie tokenów.
+3. **Weryfikacja i Rozliczenie (Settlement):** Klient weryfikuje dostarczony wynik w interfejsie React i zatwierdza przelew środków z depozytu do wykonawcy, co zostaje zakotwiczone w sieci Solana (`REAL_FINAL_TX_HASH`).
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+---
 
-## Expanding the ESLint configuration
+## 🚀 Jak uruchomić projekt krok po kroku
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+### Wymagania wstępne
+* **Node.js** (wersja 18+ zalecana)
+* **npm** lub **yarn**
+* Aktywny workflow / webhook skonfigurowany w **n8n**
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
-```
-
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
-```
+### 1. Sklonowanie repozytorium i instalacja zależności
+```bash
+git clone [https://github.com/TWOJA_NAZWA_UZYTKOWNIKA/TWOJE_REPO.git](https://github.com/TWOJA_NAZWA_UZYTKOWNIKA/TWOJE_REPO.git)
+cd TWOJE_REPO
+npm install
